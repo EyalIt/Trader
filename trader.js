@@ -2,6 +2,7 @@
 
 const util = require('util')
 const request = require('request');
+const crypto = require('crypto');
 
 let longTerm = { "type" : "Long", "threshold" : 50, "total" : 0, "data" : [], "value" : 0 };
 let shortTerm = { "type" : "Short", "threshold" : 10, "total" : 0, "data" : [], "value" : 0 };
@@ -9,8 +10,12 @@ let exponential = { "type" : "Exponential", "threshold": 10, "value" : 0 };
 let trend = {"isShortAboveLong": false, "numSamples" : 0, "threshold" : 3};
 let shoudLog = false;
 
-let bank = { "deposit" : 1000, "tokens" : 0, "transactions" : [], };
+//let currency = 'xrpusd'; 
+let currency = 'btcusd';
+let bank = { "deposit" : 1000, "tokens" : 0, "transactions" : [] };
 
+
+/* Log related APIs */
 function log(message) {
 	if (shoudLog == true) {
 		console.log(message);
@@ -20,13 +25,16 @@ function log(message) {
 function setShouldlog(value) {
 	shoudLog = value;
 }
+
+
  
-function get_price(currencyType) {
+/* Server related APIs */ 
+function getPrice(currencyType) {
 	let url = util.format('https://www.bitstamp.net/api/v2/ticker/%s/', currencyType);
 
 	request(url, { json: true }, (err, res, body) => {
 		if (err) { 
-			return log(err); 
+			return console.log(err); 
 		}
 
 		let price = body.last;
@@ -34,11 +42,99 @@ function get_price(currencyType) {
 		log("Timestamp: " + timestamp + ", Price: " + price);
 
 		updateMovingAverages(price);
-		setTimeout(get_price, 2000, currencyType);
-
+		setTimeout(getPrice, 2000, currencyType);
 	});
 } 
 
+function getAccountBalance(currencyType) {
+	let url = util.format('https://www.bitstamp.net/api/v2/balance/%s/', currencyType);
+	let body = generateReqParams();
+
+	request.post({
+  		headers: {'content-type' : 'application/x-www-form-urlencoded'},
+  		url:     url,
+  		body:    body
+	}, function(err, res, body) {
+		if (err) { 
+			return console.log(err); 
+		}
+
+  		console.log(body);
+	});
+}
+
+function buyLimit(currencyType, price, amount) {
+	let url = util.format('https://www.bitstamp.net/api/v2/buy/%s/', currencyType);
+	let body = generateReqParams();
+	body += {"amount" : amount, "price" : price, "limit_price" : price??, "daily_order" : true, "ioc_order" : true };
+
+	request.post({
+  		headers: {'content-type' : 'application/x-www-form-urlencoded'},
+  		url:     url,
+  		body:    body
+	}, function(err, res, body) {
+		if (err) { 
+			return console.log(err); 
+		}
+
+  		console.log(body);
+	});
+}
+
+function sellLimit(currencyType, price, amount) {
+	let url = util.format('https://www.bitstamp.net/api/v2/sell/%s/', currencyType);
+	let body = generateReqParams();
+	body += {"amount" : amount, "price" : price, "limit_price" : price??, "daily_order" : true, "ioc_order" : true };
+
+	request.post({
+  		headers: {'content-type' : 'application/x-www-form-urlencoded'},
+  		url:     url,
+  		body:    body
+	}, function(err, res, body) {
+		if (err) { 
+			return console.log(err); 
+		}
+
+  		console.log(body);
+	});
+}
+
+function generateReqParams() {
+	let apiKey = '';
+	let customerId = '';
+	let nonce = Math.floor(new Date() / 1000);
+
+	let message = nonce + customerId + apiKey;
+	let secret = '';
+	let hmac = crypto.createHmac('sha256', secret);
+
+	// perform the signature algorithm
+	hmac.update(message);
+	let signature = hmac.digest('hex').toUpperCase();
+
+	return { "key" : apiKey, "signature" : signature, "nonce" : nonce };
+}
+
+async function init(currencyType) {
+	let url = util.format('https://www.bitstamp.net/api/v2/ticker/%s/', currencyType);
+
+	await request(url, { json: true }, (err, res, body) => {
+		if (err) { 
+			return console.log(err); 
+		}
+
+		let price = body.last;
+		let timestamp = body.timestamp;
+		log("Timestamp: " + timestamp + ", Price: " + price);
+
+		exponential.value = parseFloat(price);
+	});
+}
+
+
+
+
+/* Moving average related functions */
 function updateMovingAverages(price) {
 	setTimeout(calculateMovingAverage, 1, price, longTerm);
 	setTimeout(calculateMovingAverage, 1, price, shortTerm);
@@ -47,7 +143,7 @@ function updateMovingAverages(price) {
 }
 
 function calculateMovingAverage(price, mvObj) {
-	price = parseFloat(parseFloat(price).toFixed(2));
+	price = parseFloat(price);
 	let totalPrices = mvObj.data.push(price);
 
 	mvObj.total += price;
@@ -57,15 +153,15 @@ function calculateMovingAverage(price, mvObj) {
 		totalPrices--;
 	}
 
-	mvObj.total = parseFloat(mvObj.total.toFixed(2));
-	mvObj.value = parseFloat((mvObj.total / totalPrices).toFixed(2));
+	mvObj.total = parseFloat(mvObj.total);
+	mvObj.value = parseFloat(mvObj.total / totalPrices);
 	log(mvObj.type + " Term Moving Average: " + mvObj.value);
 }
 
 function calculateExponentialMovingAverage(price, exponential) {
 	let multiplier = 2 / (exponential.threshold + 1);
 	exponential.value = ((price - exponential.value) * multiplier) + exponential.value;
-	exponential.value = parseFloat(exponential.value.toFixed(2));
+	exponential.value = parseFloat(exponential.value);
 	log(exponential.type + " Moving Average: " + exponential.value);
 }
 
@@ -86,6 +182,9 @@ function calculateCrossover(shortTerm, longTerm, price, trend) {
 	}
 }
 
+
+
+/* Trade decision functions */
 function decideWhetherToInvest(isShortAboveLong, price) {
 	if (isShortAboveLong == false) {
 		buy(price);
@@ -114,28 +213,31 @@ function sell(price) {
 	}
 }
 
-function init(currencyType) {
-	let url = util.format('https://www.bitstamp.net/api/v2/ticker/%s/', currencyType);
 
-	request(url, { json: true }, (err, res, body) => {
-		if (err) { 
-			return console.log(err); 
-		}
 
-		let price = body.last;
-		let timestamp = body.timestamp;
-		log("Timestamp: " + timestamp + ", Price: " + price);
+/* Internal server related functions */
+function generateGraph() {
+	let res = util.inspect(longTerm, false, null) + "\n\n";
+	res += util.inspect(shortTerm, false, null) + "\n\n";
+	res += util.inspect(trend, false, null) + "\n\n";
+	res += util.inspect(bank, false, null) + "\n\n";
 
-		exponential.value = parseFloat(parseFloat(price).toFixed(2));;
-	});
+	return res;
+}
+
+function cancelAllTransactions() {
+	return "success\n";
 }
 
 async function run() {
 	// initialize
 	//setShouldlog(true);
-	await init('btcusd');
+	await init(currency);
 
-	get_price('btcusd');
+	getPrice(currency);
 }
 
+
 module.exports.run = run;
+module.exports.generateGraph = generateGraph;
+module.exports.cancelAllTransactions = cancelAllTransactions;
