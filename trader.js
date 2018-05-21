@@ -8,104 +8,87 @@ let longTerm = { "type" : "Long", "threshold" : 50, "total" : 0, "data" : [], "v
 let shortTerm = { "type" : "Short", "threshold" : 10, "total" : 0, "data" : [], "value" : 0 };
 let exponential = { "type" : "Exponential", "threshold": 10, "value" : 0 };
 let trend = {"isShortAboveLong": false, "numSamples" : 0, "threshold" : 3};
-let shoudLog = false;
 
 //let currency = 'xrpusd'; 
 let currency = 'btcusd';
-let bank = { "deposit" : 1000, "tokens" : 0, "transactions" : [] };
+let bank = { "deposit" : 1000, "limit" : 1000, "tokens" : 0, "inPosition" : false };
+
+let debugLogs = false;
+let isDemo = true;
+
+// secrets
+
+
 
 
 /* Log related APIs */
 function log(message) {
-	if (shoudLog == true) {
+	if (debugLogs == true) {
 		console.log(message);
 	}
 }
 
-function setShouldlog(value) {
-	shoudLog = value;
-}
-
-
  
 /* Server related APIs */ 
-function getPrice(currencyType) {
-	let url = util.format('https://www.bitstamp.net/api/v2/ticker/%s/', currencyType);
+function getPrice() {
+	let url = util.format('https://www.bitstamp.net/api/v2/ticker/%s/', currency);
 
 	request(url, { json: true }, (err, res, body) => {
 		if (err) { 
-			return console.log(err); 
+			console.log(err); 
+		} else {
+			let price = body.last;
+			let timestamp = body.timestamp;
+			log("Timestamp: " + timestamp + ", Price: " + price);
+
+			updateMovingAverages(price);
 		}
-
-		let price = body.last;
-		let timestamp = body.timestamp;
-		log("Timestamp: " + timestamp + ", Price: " + price);
-
-		updateMovingAverages(price);
-		setTimeout(getPrice, 2000, currencyType);
+		setTimeout(getPrice, 2000);
 	});
 } 
 
-function getAccountBalance(currencyType) {
-	let url = util.format('https://www.bitstamp.net/api/v2/balance/%s/', currencyType);
+function getAccountBalance(callback) {
+	let url = util.format('https://www.bitstamp.net/api/v2/balance/%s/', currency);
 	let body = generateReqParams();
 
 	request.post({
-  		headers: {'content-type' : 'application/x-www-form-urlencoded'},
+  		headers: {'Content-type' : 'application/json'},
   		url:     url,
-  		body:    body
-	}, function(err, res, body) {
-		if (err) { 
-			return console.log(err); 
-		}
-
-  		console.log(body);
-	});
+  		json: 	 true,
+  		form:    body
+	}, callback);
 }
 
-function buyLimit(currencyType, price, amount) {
-	let url = util.format('https://www.bitstamp.net/api/v2/buy/%s/', currencyType);
+function buyLimit(price, amount, callback) {
+	let url = util.format('https://www.bitstamp.net/api/v2/buy/%s/', currency);
 	let body = generateReqParams();
-	body += {"amount" : amount, "price" : price, "limit_price" : price??, "daily_order" : true, "ioc_order" : true };
+	body = Object.assign(body, {"amount" : amount, "price" : price, "daily_order" : true, "ioc_order" : true });
 
 	request.post({
-  		headers: {'content-type' : 'application/x-www-form-urlencoded'},
+  		headers: {'Content-type' : 'application/json'},
   		url:     url,
-  		body:    body
-	}, function(err, res, body) {
-		if (err) { 
-			return console.log(err); 
-		}
-
-  		console.log(body);
-	});
+  		json: 	 true,
+  		form:    body
+	}, callback);
 }
 
-function sellLimit(currencyType, price, amount) {
-	let url = util.format('https://www.bitstamp.net/api/v2/sell/%s/', currencyType);
+function sellLimit(price, amount, callback) {
+	let url = util.format('https://www.bitstamp.net/api/v2/sell/%s/', currency);
 	let body = generateReqParams();
-	body += {"amount" : amount, "price" : price, "limit_price" : price??, "daily_order" : true, "ioc_order" : true };
+	body = Object.assign(body, {"amount" : amount, "price" : price, "daily_order" : true, "ioc_order" : true });
 
 	request.post({
-  		headers: {'content-type' : 'application/x-www-form-urlencoded'},
+  		headers: {'Content-type' : 'application/json'},
   		url:     url,
-  		body:    body
-	}, function(err, res, body) {
-		if (err) { 
-			return console.log(err); 
-		}
-
-  		console.log(body);
-	});
+  		json: 	 true,
+  		form:    body
+	}, callback);
 }
 
 function generateReqParams() {
-	let apiKey = '';
-	let customerId = '';
-	let nonce = Math.floor(new Date() / 1000);
+	let nonce = Math.floor(new Date() / 1);
 
 	let message = nonce + customerId + apiKey;
-	let secret = '';
 	let hmac = crypto.createHmac('sha256', secret);
 
 	// perform the signature algorithm
@@ -115,8 +98,8 @@ function generateReqParams() {
 	return { "key" : apiKey, "signature" : signature, "nonce" : nonce };
 }
 
-async function init(currencyType) {
-	let url = util.format('https://www.bitstamp.net/api/v2/ticker/%s/', currencyType);
+async function init() {
+	let url = util.format('https://www.bitstamp.net/api/v2/ticker/%s/', currency);
 
 	await request(url, { json: true }, (err, res, body) => {
 		if (err) { 
@@ -155,14 +138,14 @@ function calculateMovingAverage(price, mvObj) {
 
 	mvObj.total = parseFloat(mvObj.total);
 	mvObj.value = parseFloat(mvObj.total / totalPrices);
-	log(mvObj.type + " Term Moving Average: " + mvObj.value);
+	//log(mvObj.type + " Term Moving Average: " + mvObj.value);
 }
 
 function calculateExponentialMovingAverage(price, exponential) {
 	let multiplier = 2 / (exponential.threshold + 1);
 	exponential.value = ((price - exponential.value) * multiplier) + exponential.value;
 	exponential.value = parseFloat(exponential.value);
-	log(exponential.type + " Moving Average: " + exponential.value);
+	//log(exponential.type + " Moving Average: " + exponential.value);
 }
 
 function calculateCrossover(shortTerm, longTerm, price, trend) {
@@ -194,22 +177,75 @@ function decideWhetherToInvest(isShortAboveLong, price) {
 }
 
 function buy(price) {
-	if (bank.deposit > 0) {
-		bank.tokens = bank.deposit / price;
+	if (bank.inPosition == false) {
+		bank.tokens = Math.min(bank.deposit, bank.limit) / price;
 		bank.deposit -= (price * bank.tokens);
-		setShouldlog(true);
-		log("Buying at price = " + price + ". Total tokens = " + bank.tokens + ". Deposit is " + bank.deposit + " USD.");
-		setShouldlog(false);		
+		bank.inPosition = true;
+		console.log("Buying at price = " + price + ". Total tokens = " + bank.tokens + ". Deposit is " + bank.deposit + " USD.");
+
+		if (isDemo == false) {
+			buyLimit(price, bank.tokens, function(err, res, body) {
+				if (err) {
+					bank.inPosition = false;
+					return console.log(err);
+				}
+
+				getAccountBalance(function(err, res, body) {
+					if (err) {
+						return console.log(err);
+					}
+
+					let tokens = parseFloat(body.btc_balance);
+
+					// make sure the buy order was made
+					if (tokens != bank.tokens) {
+						bank.inPosition = false;
+						return;
+					}
+
+					bank.deposit = Math.min(parseFloat(body.usd_balance), bank.limit);
+					console.log("Made a purchase at price = " + price + ". Total tokens = " + bank.tokens + ". Deposit is " + bank.deposit + " USD.");
+				});
+			});		
+		}
 	}
 }
 
 function sell(price) {
-	if (bank.tokens > 0) { 
-		bank.deposit = bank.tokens * price;
-		bank.tokens -= (bank.deposit / price);
-		setShouldlog(true);
-		log("Selling at price = " + price + ". Total tokens = " + bank.tokens + ". Deposit is " + bank.deposit + " USD.");
-		setShouldlog(false);	
+	if (bank.inPosition == true) { 
+		bank.deposit += bank.tokens * price;
+		bank.tokens -= (Math.min(bank.deposit, bank.limit) / price);
+		bank.inPosition = false;
+		console.log("Selling at price = " + price + ". Total tokens = " + bank.tokens + ". Deposit is " + bank.deposit + " USD.");
+
+		if (isDemo == false) {
+			sellLimit(price, bank.tokens, function(err, res, body) {
+				if (err) {
+					bank.inPosition = true;
+					console.log(err);
+					console.log("Sell Error");
+					process.exit();
+				}
+
+				getAccountBalance(function(err, res, body) {
+					if (err) {
+						return console.log(err);
+					}
+
+					let tokens = parseFloat(body.btc_balance);
+					
+					// make sure the buy order was made
+					if (tokens != bank.tokens) {
+						bank.inPosition = true;
+						console.log("Sell Verification Error");
+						process.exit();
+					}
+
+					bank.deposit = Math.min(parseFloat(body.usd_balance), bank.limit);
+					console.log("Made a sell at price = " + price + ". Total tokens = " + bank.tokens + ". Deposit is " + bank.deposit + " USD.");
+				});
+			});		
+		}
 	}
 }
 
@@ -229,12 +265,26 @@ function cancelAllTransactions() {
 	return "success\n";
 }
 
+function defaultCallback(err, res, body) {
+	if (err) { 
+		console.log(err); 
+	} else {
+		console.log(body);
+	}
+}
+
 async function run() {
 	// initialize
-	//setShouldlog(true);
-	await init(currency);
+	await init();
+	log("Initialized");
 
-	getPrice(currency);
+	if (isDemo == false) {
+		getAccountBalance(defaultCallback);
+		//buyLimit(8390, 0.001, defaultCallback);
+		//sellLimit(8400, 0.001, defaultCallback);		
+	}
+
+	getPrice();
 }
 
 
