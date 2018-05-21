@@ -130,7 +130,7 @@ function init(currencyType) {
 	});
 }
 
-async function main() {
+async function run() {
 	// initialize
 	//setShouldlog(true);
 	await init('btcusd');
@@ -138,5 +138,4 @@ async function main() {
 	get_price('btcusd');
 }
 
-
-main();
+module.exports.run = run;
