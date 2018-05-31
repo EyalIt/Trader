@@ -5,7 +5,7 @@ const util = require('util');
 
 const Bitstamp = require('./bitstamp');
 let trader = new Bitstamp();
-let currency = 'btcusd';
+let currency = 'btcusd'; //'btceur'; 
 
 /*
 const Robinhood = require('./robinhood');
@@ -18,20 +18,25 @@ const SMA = require('./sma');
 let sma = new SMA(10, "Short");
 let lma = new SMA(50, "Long");
 
-let exponential = { "type" : "Exponential", "threshold": 10, "value" : 0 };
-let trend = {"isShortAboveLong": false, "numSamples" : 0, "threshold" : 3};
+const EMA = require('./ema');
+let emas;
+let emal;
 
+let trend = {"isShortAboveLong": false, "numSamples" : 0, "threshold" : 3};
+const MACD = require('./MACD');
+let macd = new MACD(10);
 
 //let currency = 'WDC';
-let bank = { "deposit" : 1000, "limit" : 1000, "tokens" : 0, "inPosition" : false };
+let bank = { "deposit" : 1000, "limit" : 1000, "tokens" : 0, "inPosition" : false, "tradeNumber" : 0, "fee" : 0.25 };
 
 let isDemo = true;
-
+let sellPrice = 0;
 
 
 async function init() {
 	await trader.getPrice(currency, function(price) {
-		exponential.value = parseFloat(price);
+		emas = new EMA(10, price);
+		emal = new EMA(100, price);
 	});
 }
 
@@ -39,22 +44,18 @@ async function init() {
 
 /* Moving average related functions */
 function updateMovingAverages(price) {
-	sma.addSamplePoint(price);
-	lma.addSamplePoint(price);
+	let sample = parseFloat(price);
 
-	setTimeout(calculateExponentialMovingAverage, 1, price, exponential);
-	setTimeout(calculateCrossover, 2, sma, lma, price, trend);
+	sma.addSamplePoint(sample);
+	lma.addSamplePoint(sample);
+	emas.addSamplePoint(sample);
+	emal.addSamplePoint(sample);
+
+	setTimeout(decideWhetherToInvest, 1, sample);
 }
 
-function calculateExponentialMovingAverage(price, exponential) {
-	let multiplier = 2 / (exponential.threshold + 1);
-	exponential.value = ((price - exponential.value) * multiplier) + exponential.value;
-	exponential.value = parseFloat(exponential.value);
-	//console.log(exponential.type + " Moving Average: " + exponential.value);
-}
-
-function calculateCrossover(sma, lma, price, trend) {
-	let isShortAboveLong = sma.value > lma.value;
+function calculateCrossover(price, short, long) {
+	let isShortAboveLong = short > long;
 
 	if (trend.isShortAboveLong != isShortAboveLong) {
 		trend.numSamples++;
@@ -62,28 +63,69 @@ function calculateCrossover(sma, lma, price, trend) {
 		if (trend.numSamples > trend.threshold) {
 			trend.isShortAboveLong = isShortAboveLong;	
 			trend.numSamples = 0;		
-			setTimeout(decideWhetherToInvest, 1, trend.isShortAboveLong, price);
+			
+			// invest (-1 = sell, 1 = buy)
+			if (trend.isShortAboveLong == true) {
+ 				return -1;
+			} else {
+				return 1;
+			}
 		}
+	} else {
+		trend.numSamples = 0;
 	}
+
+	return 0;
 }
 
 
-
 /* Trade decision functions */
-function decideWhetherToInvest(isShortAboveLong, price) {
-	if (isShortAboveLong == false) {
+function decideWhetherToInvest(price) {
+	/*
+	let isCrossover = calculateCrossover(price, sma.value, lma.value);
+	if (isCrossover != 0) {
+		return invest(isCrossover == 1, price);
+	}
+	*/
+
+	macd.calculate(sma.value, lma.value);
+	if (macd.isOnTheUprise()) {
+		return invest(true, price);
+	}
+
+	if (sellPrice > 0 && sellPrice < price) {
+		invest(false, price);
+		sellPrice = 0;
+	}
+}
+
+function invest(isBuy, price) {
+	if (isBuy == true) {	
 		buy(price);
 	} else {
 		sell(price);
 	}
+
+	bank.tradeNumber++;
+}
+
+function calculateFee(investment) {
+	return (bank.fee * investment) / 100;
 }
 
 function buy(price) {
 	if (bank.inPosition == false) {
-		bank.tokens = Math.min(bank.deposit, bank.limit) / price;
+		let investment = Math.min(bank.deposit, bank.limit);
+		let fee = calculateFee(investment);
+		//console.log("Transaction fee is " + fee + " USD.");
+
+		sellPrice = price + ((4 * fee * investment) / 100);
+		console.log("Sell Price: " + sellPrice);
+
+		bank.tokens = investment / price;
 		bank.deposit -= (price * bank.tokens);
 		bank.inPosition = true;
-		console.log("Buying at price = " + price + ". Total tokens = " + bank.tokens + ". Deposit is " + bank.deposit + " USD.");
+		console.log("#" + bank.tradeNumber + ": Buying at price = " + price + ". Total tokens = " + bank.tokens + ". Deposit is " + bank.deposit + " USD.");
 
 		if (isDemo == false) {
 			trader.buy(currency, price, bank.tokens, function(err, res, body) {
@@ -115,10 +157,14 @@ function buy(price) {
 
 function sell(price) {
 	if (bank.inPosition == true) { 
-		bank.deposit += (price * bank.tokens);
+		let investment = price * bank.tokens;
+		let fee = calculateFee(investment);
+		//console.log("Transaction fee is " + fee + " USD.");
+
+		bank.deposit += investment;
 		bank.tokens = 0;
 		bank.inPosition = false;
-		console.log("Selling at price = " + price + ". Total tokens = " + bank.tokens + ". Deposit is " + bank.deposit + " USD.");
+		console.log("#" + bank.tradeNumber + ": Selling at price = " + price + ". Total tokens = " + bank.tokens + ". Deposit is " + bank.deposit + " USD.");
 
 		if (isDemo == false) {
 			trader.sell(currency, price, bank.tokens, function(err, res, body) {

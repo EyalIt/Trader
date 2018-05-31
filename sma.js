@@ -18,11 +18,9 @@ class SMA {
 	}
 
 	addSamplePoint(sample) {
-		//console.log(this._data);
-		let samplePoint = parseFloat(sample);
-		let numOfSamples = this._data.push(samplePoint);
+		let numOfSamples = this._data.push(sample);
 
-		this._sum += samplePoint;
+		this._sum += sample;
 		if (numOfSamples > this._samplePoints) {
 			let first = this._data.shift();
 			this._sum -= first;
